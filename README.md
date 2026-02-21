@@ -130,4 +130,4 @@ This tool is provided **as-is, without warranty of any kind**. Use at your own r
 
 ### Commercial License
 
-If your organization requires a **proprietary/commercial license** (without AGPL copyleft obligations), enterprise support, custom integrations, or SLA-backed maintenance, contact: **georgios.kapellakis@yandex.com**
+If your organization requires a **proprietary/commercial license** (without AGPL copyleft obligations), enterprise support, custom integrations, or SLA-backed maintenance, see [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) or contact: **georgios.kapellakis@yandex.com**
