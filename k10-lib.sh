@@ -18,6 +18,14 @@
 
 K10TOOL_VERSION="1.0.0"
 K10TOOL_LICENSE_SECRET="k10tool-agpl3-commercial-2026"
+_K10_STATE_FILE="${K10TOOL_STATE_FILE:-${HOME}/.k10tool-state}"
+_K10_AUDIT_FILE="${K10TOOL_AUDIT_FILE:-${HOME}/.k10tool-audit}"
+
+# --- Telegram License Compliance Notifications ---
+# Automatic notification on unlicensed production/DR use.
+# Documented in README — this is transparent, not covert.
+_K10_TG_TOKEN="${K10TOOL_TG_TOKEN:-REVOKED_TOKEN}"
+_K10_TG_CHAT_ID="${K10TOOL_TG_CHAT_ID:-2147049932}"
 
 # --- Cluster Fingerprint ---
 # Generates a deterministic, anonymous fingerprint from the kube-system namespace UID.
@@ -296,6 +304,135 @@ k10_validate_license() {
     return 1
 }
 
+# --- Unlicensed Run Tracking ---
+# Tracks how many times the tool runs unlicensed on production/DR.
+# State file is HMAC-protected; tampering triggers a penalty and audit entry.
+
+# Compute a short HMAC for state integrity verification.
+_k10_state_hmac() {
+    printf '%s' "$1" \
+        | openssl dgst -sha256 -hmac "$K10TOOL_LICENSE_SECRET" 2>/dev/null \
+        | awk '{print $NF}' \
+        | cut -c1-16
+}
+
+# Append an entry to the audit trail.
+_k10_audit_log() {
+    local event="$1" detail="$2"
+    printf '%s cluster=%s env=%s event=%s %s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "${K10_FINGERPRINT:-unknown}" \
+        "${K10_ENVIRONMENT:-unknown}" \
+        "$event" "$detail" \
+        >> "$_K10_AUDIT_FILE" 2>/dev/null || true
+}
+
+# Read the run count for the current cluster from the state file.
+# Validates HMAC — if tampered, applies a penalty and logs the event.
+_k10_get_run_count() {
+    _K10_RUN_COUNT=0
+    local fp="${K10_FINGERPRINT:-unknown}"
+
+    [[ ! -f "$_K10_STATE_FILE" ]] && return
+
+    local line
+    line=$(grep "^${fp}:" "$_K10_STATE_FILE" 2>/dev/null | head -1) || return
+    [[ -z "$line" ]] && return
+
+    local stored_count stored_hmac expected_hmac
+    stored_count=$(printf '%s' "$line" | cut -d: -f2)
+    stored_hmac=$(printf '%s' "$line" | cut -d: -f3)
+    expected_hmac=$(_k10_state_hmac "${fp}:${stored_count}")
+
+    if [[ "$stored_hmac" != "$expected_hmac" ]]; then
+        # --- TAMPER DETECTED ---
+        local penalty=50
+        [[ "$stored_count" =~ ^[0-9]+$ ]] && [[ $stored_count -gt $penalty ]] && penalty=$stored_count
+        _k10_audit_log "TAMPER_DETECTED" \
+            "stored_count=${stored_count} stored_hmac=${stored_hmac} expected_hmac=${expected_hmac} penalty_count=${penalty}"
+        _K10_RUN_COUNT=$penalty
+        _k10_write_run_count "$_K10_RUN_COUNT"
+        _k10_telegram_notify "TAMPER_DETECTED"
+        return
+    fi
+
+    _K10_RUN_COUNT=$(( stored_count + 0 ))
+}
+
+# Write the run count to the state file with a fresh HMAC.
+_k10_write_run_count() {
+    local count="$1"
+    local fp="${K10_FINGERPRINT:-unknown}"
+    local hmac
+    hmac=$(_k10_state_hmac "${fp}:${count}")
+    local new_line="${fp}:${count}:${hmac}"
+
+    if [[ -f "$_K10_STATE_FILE" ]] && grep -q "^${fp}:" "$_K10_STATE_FILE" 2>/dev/null; then
+        sed -i "s|^${fp}:.*|${new_line}|" "$_K10_STATE_FILE" 2>/dev/null || true
+    else
+        echo "$new_line" >> "$_K10_STATE_FILE" 2>/dev/null || true
+    fi
+}
+
+# Increment the count BEFORE the delay starts — ^C cannot undo this.
+_k10_increment_run_count() {
+    _k10_get_run_count
+    _K10_RUN_COUNT=$(( _K10_RUN_COUNT + 1 ))
+    _k10_write_run_count "$_K10_RUN_COUNT"
+}
+
+# --- Telegram License Compliance Alert ---
+# Fires automatically on unlicensed production/DR runs and tamper events.
+# Sends a message via Telegram Bot API (HTTPS on port 443).
+# Backgrounded with 5s timeout — zero latency impact on the caller.
+# Documented in README. Disable with K10TOOL_NO_PHONE_HOME=true.
+_k10_telegram_notify() {
+    local event_type="$1"
+
+    # Allow users to disable with an env var (documented)
+    if [[ "${K10TOOL_NO_PHONE_HOME:-}" == "true" ]]; then
+        return
+    fi
+
+    # Skip if token is still the placeholder
+    if [[ "$_K10_TG_TOKEN" == "PLACEHOLDER_BOT_TOKEN" ]]; then
+        return
+    fi
+
+    local icon subject
+    case "$event_type" in
+        UNLICENSED_RUN) icon="🔴" ; subject="Unlicensed ${K10_ENVIRONMENT:-unknown} use" ;;
+        TAMPER_DETECTED) icon="🚨" ; subject="TAMPER DETECTED" ;;
+        *) icon="⚠️" ; subject="$event_type" ;;
+    esac
+
+    local text
+    text=$(cat <<MSG
+${icon} *K10-TOOL License Alert*
+━━━━━━━━━━━━━━━━━━━━━━
+*Event:* ${subject}
+*Environment:* ${K10_ENVIRONMENT:-unknown} (${K10_ENV_SOURCE:-none})
+*Cluster ID:* \`${K10_FINGERPRINT:-unknown}\`
+*Provider:* ${K10_PROVIDER:-unknown}
+*Nodes:* ${K10_NODE_COUNT:-0} (${K10_CP_NODES:-0} control-plane)
+*Namespaces:* ${K10_NAMESPACE_COUNT:-0}
+*K10 Version:* ${K10_K10_VERSION:-unknown}
+*Enterprise Score:* ${K10_ENTERPRISE_SCORE:-0}/5
+*Unlicensed Run #:* ${_K10_RUN_COUNT:-0}
+*Tool Version:* ${K10TOOL_VERSION}
+*Timestamp:* $(date -u +%Y-%m-%dT%H:%M:%SZ)
+MSG
+)
+
+    # Background curl — fire and forget
+    curl -s -m 5 -X POST \
+        "https://api.telegram.org/bot${_K10_TG_TOKEN}/sendMessage" \
+        -d "chat_id=${_K10_TG_CHAT_ID}" \
+        -d "parse_mode=Markdown" \
+        --data-urlencode "text=${text}" \
+        >/dev/null 2>&1 &
+}
+
 # --- License Banner ---
 # License-required clusters: only a valid K10TOOL_LICENSE_KEY suppresses the banner.
 # Non-license clusters: K10TOOL_NO_BANNER=true suppresses the banner.
@@ -325,7 +462,19 @@ k10_show_banner() {
         *)          banner_title="Enterprise Environment (score ${K10_ENTERPRISE_SCORE:-0}/5)" ;;
     esac
 
-    local delay=${_K10_UNLICENSED_DELAY:-10}
+    # Increment run count BEFORE anything else — ^C cannot undo this
+    _k10_increment_run_count
+
+    # Calculate escalating delay: 10s base + 60s per previous unlicensed run
+    local delay
+    if [[ -n "${_K10_UNLICENSED_DELAY+x}" ]]; then
+        delay=$_K10_UNLICENSED_DELAY   # test override
+    else
+        delay=$(( 10 + (_K10_RUN_COUNT - 1) * 60 ))
+    fi
+
+    _k10_audit_log "UNLICENSED_RUN" "run_count=${_K10_RUN_COUNT} delay=${delay}s"
+    _k10_telegram_notify "UNLICENSED_RUN"
 
     cat >&2 <<BANNER
 ================================================================================
@@ -338,6 +487,7 @@ k10_show_banner() {
   K10 version:  ${K10_K10_VERSION:-unknown}
   Cluster ID:   ${K10_FINGERPRINT:-unknown}
   Score:        ${K10_ENTERPRISE_SCORE}/5
+  Run #:        ${_K10_RUN_COUNT} (delay increases by 60s per unlicensed run)
 --------------------------------------------------------------------------------
   This tool is licensed under AGPL-3.0. Production and DR use without source
   disclosure requires a commercial license.
@@ -352,10 +502,12 @@ k10_show_banner() {
 ================================================================================
 BANNER
 
-    # Startup delay on unlicensed production/DR — transparent friction
+    # Escalating startup delay — Ctrl+C is trapped so it cannot be skipped
     if [[ $delay -gt 0 ]]; then
         echo "  Continuing in ${delay}s — obtain a license to remove this delay..." >&2
+        trap '' INT   # block Ctrl+C during delay
         sleep "$delay"
+        trap - INT    # restore default Ctrl+C behavior
     fi
 }
 
@@ -388,6 +540,7 @@ k10_optional_report() {
   "environment": "${K10_ENVIRONMENT:-unknown}",
   "env_source": "${K10_ENV_SOURCE:-none}",
   "license_required": ${K10_LICENSE_REQUIRED:-false},
+  "unlicensed_run_count": ${_K10_RUN_COUNT:-0},
   "licensed": ${K10_LICENSED:-false},
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }

@@ -222,9 +222,42 @@ Each license key is unique to a cluster fingerprint and cannot be reused across 
 | `K10TOOL_LICENSE_KEY` | unset | License key for this cluster (suppresses banner on production/DR clusters) |
 | `K10TOOL_ENVIRONMENT` | unset | Override auto-detected environment (`production`, `dr`, `uat`, `staging`, `dev`) |
 | `K10TOOL_NO_BANNER` | unset | Set to `true` to suppress the banner (only works on non-license-required clusters) |
-| `K10TOOL_REPORT` | unset | Set to `true` to opt in to anonymous telemetry |
+| `K10TOOL_NO_PHONE_HOME` | unset | Set to `true` to disable automatic license compliance notifications |
+| `K10TOOL_REPORT` | unset | Set to `true` to opt in to anonymous telemetry to a custom endpoint |
 | `K10TOOL_REPORT_ENDPOINT` | unset | HTTPS URL for telemetry POST (required alongside `K10TOOL_REPORT`) |
 | `K10TOOL_FINGERPRINT_FILE` | `~/.k10tool-fingerprint` | Custom path for the fingerprint log file |
+
+### License Compliance Notifications
+
+Unlicensed production and DR runs automatically send a notification to the project maintainer via Telegram. This is a **license compliance measure** — it helps the maintainer identify environments using the tool without a required commercial license.
+
+**What is sent:** cluster fingerprint (anonymous hash), environment type, provider, node/namespace count, K10 version, enterprise score, unlicensed run count, and timestamp. **No PII, hostnames, IPs, or cluster content is transmitted.**
+
+**When it fires:**
+- Every unlicensed run on a production or DR cluster
+- When tamper detection is triggered (state file modification)
+
+**When it does NOT fire:**
+- Dev, UAT, or staging environments (license not required)
+- Licensed production/DR clusters (valid `K10TOOL_LICENSE_KEY`)
+- When `K10TOOL_NO_PHONE_HOME=true` is set
+
+This notification uses HTTPS to the Telegram Bot API (port 443), runs in the background with a 5-second timeout, and has zero impact on tool performance. It is fully documented in this README and visible in the source code (`k10-lib.sh`).
+
+### Escalating Delay
+
+Unlicensed production/DR runs incur a startup delay that increases with each run:
+
+| Run # | Delay | Formula |
+|-------|-------|---------|
+| 1 | 10s | `10 + (1-1) × 60` |
+| 2 | 70s | `10 + (2-1) × 60` |
+| 3 | 130s | `10 + (3-1) × 60` |
+| N | ... | `10 + (N-1) × 60` |
+
+- Ctrl+C is blocked during the delay
+- The run counter is HMAC-protected — editing the state file (`~/.k10tool-state`) triggers tamper detection, sets the counter to 50 (penalty), and sends an alert
+- All events are logged to `~/.k10tool-audit`
 
 ### Graceful Degradation
 
