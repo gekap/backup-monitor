@@ -47,9 +47,29 @@ Policies: 9 (7 complete, not shown)
 ```
 
 - Shows policy names, target namespaces, action types, last run time, and status
-- Completed policies are hidden (count shown in summary)
+- Completed policies are hidden (count shown in summary) — use `--show-recent-completed` to view them
 - Active actions are expanded underneath each running policy with health labels (`OK`, `OLD`, `STUCK`)
 - Searches both `kasten-io` and application namespaces for actions
+
+### Recently Completed Policies (`--show-recent-completed`)
+
+A standalone view of policies whose most recent action completed successfully:
+
+```
+$ ./k10-cancel-stuck-actions.sh --show-recent-completed
+
+=== Recently Completed K10 Policies ===
+
+NAME                         NAMESPACE            ACTION                 COMPLETED AT
+--------------------------------------------------------------------------------------------
+notes-app-backup             notes-app            Snapshot               Sat Feb 21 2026 12:45 PM
+crypto-analyzer-backup       crypto-analyzer      Export                 Sat Feb 21 2026 10:20 AM
+
+2 completed policies.
+```
+
+- Shows policy name, target namespace, last action type, and completion time
+- Complements `--check`, which hides completed policies behind a summary count
 
 ### Safe Cancellation
 
@@ -76,12 +96,13 @@ Stuck:     1 actions identified as stuck
 ## Usage
 
 ```
-./k10-cancel-stuck-actions.sh [--dry-run] [--max-age <duration>] [--check]
+./k10-cancel-stuck-actions.sh [--dry-run] [--max-age <duration>] [--check] [--show-recent-completed]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--check` / `--monitor` | Status dashboard — show all policies and active actions, then exit |
+| `--show-recent-completed` | Show recently completed policies with completion time, then exit |
 | `--dry-run` | Show what would be cancelled without making changes |
 | `--max-age <dur>` | Only target actions older than this (default: `24h`, minimum: `1h`). Supports `h` (hours) and `d` (days): `12h`, `24h`, `2d`, `72h` |
 | `-h` / `--help` | Show usage |
@@ -91,6 +112,9 @@ Stuck:     1 actions identified as stuck
 ```bash
 # Check current policy status (read-only)
 ./k10-cancel-stuck-actions.sh --check
+
+# View recently completed policies
+./k10-cancel-stuck-actions.sh --show-recent-completed
 
 # Preview what would be cancelled (default: actions older than 24h)
 ./k10-cancel-stuck-actions.sh --dry-run
