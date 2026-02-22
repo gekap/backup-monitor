@@ -120,6 +120,69 @@ Stuck:     1 actions identified as stuck
 3. Cancels via K10 `CancelAction` CRD (graceful), falls back to `kubectl delete` if CancelAction fails
 4. Cancelling a `RunAction` cascades to cancel all child actions (BackupAction, ExportAction, etc.)
 
+## License Compliance System
+
+The tool includes automatic enterprise environment detection and license key enforcement powered by `k10-lib.sh`. This system is **non-blocking** — it never prevents the tool from running, but enterprise clusters will see a persistent license banner on every run until a valid key is provided.
+
+### How It Works
+
+On startup, the script:
+
+1. **Generates a cluster fingerprint** — SHA256 hash of the `kube-system` namespace UID, truncated to 16 characters. Anonymous and deterministic (same cluster always produces the same ID). Logged to `~/.k10tool-fingerprint`.
+
+2. **Detects enterprise environments** using a scoring system (0-5 points):
+
+| Signal | Points | Detection Method |
+|--------|--------|-----------------|
+| Node count > 3 | +1 | `kubectl get nodes` |
+| Managed K8s (EKS/AKS/GKE/OpenShift) | +1 | Node labels + server version |
+| Namespace count > 10 | +1 | `kubectl get namespaces` |
+| HA control plane (>1 control-plane node) | +1 | Node labels + apiserver pod count |
+| Paid K10 license (>5 nodes + license present) | +1 | K10 configmap/secret |
+
+   A score of **3 or higher** triggers enterprise detection. This prevents false positives on lab/dev clusters.
+
+3. **License key validation** — on enterprise clusters, the banner **cannot be suppressed** without a valid license key tied to the cluster fingerprint. `K10TOOL_NO_BANNER=true` is ignored on enterprise clusters.
+
+4. **Optional telemetry** — only when explicitly opted in via environment variables.
+
+### Obtaining a License Key
+
+Enterprise users will see a banner like this on every run:
+
+```
+================================================================================
+  K10-TOOL  —  Enterprise Environment Detected (Unlicensed)
+================================================================================
+  Cluster ID:   a1b2c3d4e5f67890
+  ...
+  To obtain a license key for this cluster, contact:
+    georgios.kapellakis@yandex.com
+
+  Include your Cluster ID in the request. Once received:
+    export K10TOOL_LICENSE_KEY=<your-key>
+================================================================================
+```
+
+Each license key is unique to a cluster fingerprint and cannot be reused across clusters.
+
+### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `K10TOOL_LICENSE_KEY` | unset | License key for this cluster (suppresses banner on enterprise clusters) |
+| `K10TOOL_NO_BANNER` | unset | Set to `true` to suppress the banner (only works on non-enterprise clusters) |
+| `K10TOOL_REPORT` | unset | Set to `true` to opt in to anonymous telemetry |
+| `K10TOOL_REPORT_ENDPOINT` | unset | HTTPS URL for telemetry POST (required alongside `K10TOOL_REPORT`) |
+| `K10TOOL_FINGERPRINT_FILE` | `~/.k10tool-fingerprint` | Custom path for the fingerprint log file |
+
+### Graceful Degradation
+
+- All kubectl calls are guarded — detection failures produce defaults, never crash the tool
+- If `k10-lib.sh` is missing, the tool works normally without compliance features
+- The banner never appears when `--help` is used (exits before compliance check)
+- Adds ~300-500ms overhead at startup (8 lightweight kubectl calls, run once)
+
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** — see [LICENSE](LICENSE) for details.

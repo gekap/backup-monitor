@@ -123,6 +123,14 @@ done
 MAX_AGE_HOURS=$(( MAX_AGE_SECONDS / 3600 ))
 
 NAMESPACE="kasten-io"
+
+# Source shared compliance library (non-fatal if missing)
+K10LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${K10LIB_DIR}/k10-lib.sh" ]]; then
+    source "${K10LIB_DIR}/k10-lib.sh"
+    k10_license_check
+fi
+
 NOW_EPOCH=$(date +%s)
 
 # Bug #7: pre-flight connectivity check — fail fast instead of silently returning empty
