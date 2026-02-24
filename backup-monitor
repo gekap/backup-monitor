@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# k10-cleaner — entry point
+# backup-monitor — entry point
 # Copyright (c) 2026 Georgios Kapellakis
 # Licensed under AGPL-3.0 — see LICENSE for details.
 
@@ -9,6 +9,6 @@ import os
 # Ensure the package directory is on the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from k10_cleaner.cli import main
+from backup_monitor.cli import main
 
 main()

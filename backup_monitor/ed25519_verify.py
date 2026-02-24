@@ -1,4 +1,4 @@
-# k10-cleaner — Pure-Python Ed25519 signature verification (RFC 8032 §5.1)
+# backup-monitor — Pure-Python Ed25519 signature verification (RFC 8032 §5.1)
 # Copyright (c) 2026 Georgios Kapellakis
 # Licensed under AGPL-3.0 — see LICENSE for details.
 #

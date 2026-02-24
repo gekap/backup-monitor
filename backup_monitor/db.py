@@ -1,4 +1,4 @@
-# k10-cleaner — SQLite persistence layer
+# backup-monitor — SQLite persistence layer
 # Copyright (c) 2026 Georgios Kapellakis
 # Licensed under AGPL-3.0 — see LICENSE for details.
 
@@ -11,7 +11,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-_OLD_HMAC_SECRET = "k10cleaner-agpl3-commercial-2026"  # v1 migration only
+_OLD_HMAC_SECRET = "backup-cleaner-agpl3-commercial-2026"  # v1 migration only
 
 _SCHEMA_VERSION = 2
 
@@ -61,12 +61,12 @@ def compute_hmac(secret: str, data: str) -> str:
     ).hexdigest()[:16]
 
 
-class K10Database:
+class BackupMonitorDB:
     def __init__(self, db_path: str | None = None):
         if db_path is None:
             db_path = os.environ.get(
-                "K10CLEANER_DB_PATH",
-                os.path.join(Path.home(), ".k10cleaner.db"),
+                "BACKUP_MONITOR_DB_PATH",
+                os.path.join(Path.home(), ".backup-monitor.db"),
             )
         self._path = db_path
 
@@ -176,12 +176,19 @@ class K10Database:
     # ------------------------------------------------------------------
     def _migrate_legacy(self):
         home = str(Path.home())
-        self._migrate_state_file(os.path.join(home, ".k10cleaner-state"))
-        self._migrate_audit_file(os.path.join(home, ".k10cleaner-audit"))
+        self._migrate_state_file(os.path.join(home, ".backup-monitor-state"))
+        self._migrate_audit_file(os.path.join(home, ".backup-monitor-audit"))
         self._migrate_fingerprint_file(
-            os.path.join(home, ".k10cleaner-fingerprint")
+            os.path.join(home, ".backup-monitor-fingerprint")
         )
-        self._migrate_tg_failed(os.path.join(home, ".k10cleaner-tg-failed"))
+        self._migrate_tg_failed(os.path.join(home, ".backup-monitor-tg-failed"))
+        # Also migrate from old backup-cleaner flat files
+        self._migrate_state_file(os.path.join(home, ".backup-cleaner-state"))
+        self._migrate_audit_file(os.path.join(home, ".backup-cleaner-audit"))
+        self._migrate_fingerprint_file(
+            os.path.join(home, ".backup-cleaner-fingerprint")
+        )
+        self._migrate_tg_failed(os.path.join(home, ".backup-cleaner-tg-failed"))
 
     def _rename_migrated(self, path: str):
         migrated = path + ".migrated"

@@ -1,4 +1,4 @@
-# k10-cleaner
+# backup-monitor
 # Copyright (c) 2026 Georgios Kapellakis
 # Licensed under AGPL-3.0 — see LICENSE for details.
 

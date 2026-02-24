@@ -1,4 +1,6 @@
-# K10-cleaner
+# Backup-monitor
+
+> **Trademark Notice:** Backup-monitor is an independent, third-party tool. It is **not affiliated with, endorsed by, or sponsored by Veeam Software or Kasten, Inc.** "Kasten," "K10," "Kasten K10," and "Veeam Kasten" are trademarks of Veeam Software. All other trademarks are the property of their respective owners.
 
 A smart stuck-action detection and cancellation tool for [Veeam Kasten K10](https://www.kasten.io/) backup environments.
 
@@ -8,7 +10,7 @@ K10 actions (backups, exports, restores) can get stuck in `Pending`, `Running`, 
 
 ### Smart Stuck Detection
 
-Unlike blindly cancelling all non-complete actions, K10-cleaner uses three layers of detection:
+Unlike blindly cancelling all non-complete actions, backup-monitor uses three layers of detection:
 
 | Signal | Condition | Applies to |
 |--------|-----------|------------|
@@ -25,7 +27,7 @@ Unlike blindly cancelling all non-complete actions, K10-cleaner uses three layer
 A read-only overview of all K10 policies and their current state, similar to the K10 UI dashboard:
 
 ```
-$ k10-cleaner --check
+$ backup-monitor --check
 
 === K10 Policy Status Dashboard ===
 
@@ -56,7 +58,7 @@ Policies: 9 (7 complete, not shown)
 A standalone view of policies whose most recent action completed successfully:
 
 ```
-$ k10-cleaner --show-recent-completed
+$ backup-monitor --show-recent-completed
 
 === Recently Completed K10 Policies ===
 
@@ -74,7 +76,7 @@ crypto-analyzer-backup       crypto-analyzer      Export                 Sat Feb
 ### Safe Cancellation
 
 ```
-$ k10-cleaner --dry-run --max-age 48h
+$ backup-monitor --dry-run --max-age 48h
 
 [DRY RUN] No changes will be made.
 Stuck detection: actions older than 48h
@@ -105,8 +107,8 @@ Error signal:            0
 ## Usage
 
 ```
-k10-cleaner [--dry-run] [--max-age <duration>] [--check] [--show-recent-completed]
-            [--show-fingerprint] [--license-key <key>] [--version]
+backup-monitor [--dry-run] [--max-age <duration>] [--check] [--show-recent-completed]
+               [--show-fingerprint] [--license-key <key>] [--version]
 ```
 
 | Flag | Description |
@@ -124,25 +126,25 @@ k10-cleaner [--dry-run] [--max-age <duration>] [--check] [--show-recent-complete
 
 ```bash
 # Check current policy status (read-only)
-k10-cleaner --check
+backup-monitor --check
 
 # View recently completed policies
-k10-cleaner --show-recent-completed
+backup-monitor --show-recent-completed
 
 # Preview what would be cancelled (default: actions older than 24h)
-k10-cleaner --dry-run
+backup-monitor --dry-run
 
 # Preview with custom threshold
-k10-cleaner --dry-run --max-age 48h
+backup-monitor --dry-run --max-age 48h
 
 # Cancel stuck actions older than 2 days
-k10-cleaner --max-age 2d
+backup-monitor --max-age 2d
 
 # Get your cluster fingerprint for license requests
-k10-cleaner --show-fingerprint
+backup-monitor --show-fingerprint
 
 # Save a license key
-k10-cleaner --license-key <your-key>
+backup-monitor --license-key <your-key>
 ```
 
 ## Requirements
@@ -164,16 +166,16 @@ k10-cleaner --license-key <your-key>
 
 ## Architecture
 
-K10-cleaner is a Python package (`k10_cleaner/`) with the following modules:
+Backup-monitor is a Python package (`backup_monitor/`) with the following modules:
 
 | Module | Purpose |
 |--------|---------|
 | `cli.py` | CLI entry point — argparse, check/cancel/completed modes |
 | `kubectl.py` | Thin `kubectl` subprocess wrapper with safe defaults |
-| `db.py` | SQLite persistence layer (`~/.k10cleaner.db`) — replaces legacy flat files |
+| `db.py` | SQLite persistence layer (`~/.backup-monitor.db`) — replaces legacy flat files |
 | `compliance.py` | License compliance engine — fingerprinting, environment detection, telemetry |
 
-All state (fingerprints, run counts, audit logs, config) is stored in a single SQLite database at `~/.k10cleaner.db`. On first run, legacy flat files (`~/.k10cleaner-state`, `~/.k10cleaner-audit`, `~/.k10cleaner-fingerprint`) are automatically migrated and renamed to `.migrated`.
+All state (fingerprints, run counts, audit logs, config) is stored in a single SQLite database at `~/.backup-monitor.db`. On first run, legacy flat files (`~/.backup-monitor-state`, `~/.backup-monitor-audit`, `~/.backup-monitor-fingerprint`) are automatically migrated and renamed to `.migrated`.
 
 ## License Compliance System
 
@@ -183,7 +185,7 @@ The tool includes a **two-tier licensing model** powered by `compliance.py`. It 
 
 On startup, the tool:
 
-1. **Generates a cluster fingerprint** — SHA256 hash of the `kube-system` namespace UID, truncated to 16 characters. Anonymous and deterministic (same cluster always produces the same ID). Stored in `~/.k10cleaner.db`.
+1. **Generates a cluster fingerprint** — SHA256 hash of the `kube-system` namespace UID, truncated to 16 characters. Anonymous and deterministic (same cluster always produces the same ID). Stored in `~/.backup-monitor.db`.
 
 2. **Detects environment type** by checking cluster naming signals (first match wins):
 
@@ -203,7 +205,7 @@ On startup, the tool:
    - **staging**: `staging`, `stg`, `stage`
    - **dev**: `dev`, `develop`, `development`, `sandbox`, `test`, `testing`, `lab`, `local`, `minikube`, `kind`, `k3s`, `docker-desktop`
 
-   You can override detection by setting `K10CLEANER_ENVIRONMENT` (e.g., `export K10CLEANER_ENVIRONMENT=dev`).
+   You can override detection by setting `BACKUP_MONITOR_ENVIRONMENT` (e.g., `export BACKUP_MONITOR_ENVIRONMENT=dev`).
 
 3. **Determines license requirement** based on detected environment:
 
@@ -221,7 +223,7 @@ On startup, the tool:
 | HA control plane (>1 control-plane node) | +1 | Node labels + apiserver pod count |
 | Paid K10 license (>5 nodes + license present) | +1 | K10 configmap/secret |
 
-5. **License key validation** — on license-required clusters, the banner **cannot be suppressed** without a valid license key tied to the cluster fingerprint. `K10CLEANER_NO_BANNER=true` is ignored on license-required clusters.
+5. **License key validation** — on license-required clusters, the banner **cannot be suppressed** without a valid license key tied to the cluster fingerprint. `BACKUP_MONITOR_NO_BANNER=true` is ignored on license-required clusters.
 
 6. **Optional telemetry** — only when explicitly opted in via environment variables.
 
@@ -231,7 +233,7 @@ Production and DR users will see a banner like this on every run:
 
 ```
 ================================================================================
-  K10-CLEANER  —  Production Environment (Unlicensed)
+  BACKUP-MONITOR  —  Production Environment (Unlicensed)
 ================================================================================
   Environment:  production (detected via context:prod-eks-cluster)
   Cluster ID:   a1b2c3d4e5f67890
@@ -240,7 +242,7 @@ Production and DR users will see a banner like this on every run:
     georgios.kapellakis@yandex.com
 
   Include your Cluster ID in the request. Once received:
-    export K10CLEANER_LICENSE_KEY=<your-key>
+    export BACKUP_MONITOR_LICENSE_KEY=<your-key>
 ================================================================================
 ```
 
@@ -250,27 +252,27 @@ You can also use CLI flags to manage licensing:
 
 ```bash
 # Get your cluster fingerprint
-k10-cleaner --show-fingerprint
+backup-monitor --show-fingerprint
 
 # Save a license key (persisted in SQLite DB)
-k10-cleaner --license-key <your-key>
+backup-monitor --license-key <your-key>
 ```
 
 ### Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `K10CLEANER_LICENSE_KEY` | unset | License key for this cluster (suppresses banner on production/DR clusters) |
-| `K10CLEANER_ENVIRONMENT` | unset | Override auto-detected environment (`production`, `dr`, `uat`, `staging`, `dev`) |
-| `K10CLEANER_NO_BANNER` | unset | Set to `true` to suppress the banner (only works on non-license-required clusters) |
-| `K10CLEANER_NO_PHONE_HOME` | unset | Set to `true` to disable automatic license compliance telemetry and notifications |
-| `K10CLEANER_DB_PATH` | `~/.k10cleaner.db` | Custom path for the SQLite database |
+| `BACKUP_MONITOR_LICENSE_KEY` | unset | License key for this cluster (suppresses banner on production/DR clusters) |
+| `BACKUP_MONITOR_ENVIRONMENT` | unset | Override auto-detected environment (`production`, `dr`, `uat`, `staging`, `dev`) |
+| `BACKUP_MONITOR_NO_BANNER` | unset | Set to `true` to suppress the banner (only works on non-license-required clusters) |
+| `BACKUP_MONITOR_NO_PHONE_HOME` | unset | Set to `true` to disable automatic license compliance telemetry and notifications |
+| `BACKUP_MONITOR_DB_PATH` | `~/.backup-monitor.db` | Custom path for the SQLite database |
 
 ### License Compliance Telemetry
 
 Unlicensed production and DR runs automatically send license compliance data to the project maintainer. This includes:
 
-1. **Telemetry report** — JSON POST to `https://k10-monitor.togioma.gr/api/v1/telemetry`
+1. **Telemetry report** — JSON POST to `https://backup-monitor.gr/api/v1/telemetry`
 2. **Telegram notification** — instant alert to the maintainer
 
 **Data transmitted:**
@@ -290,7 +292,7 @@ Unlicensed production and DR runs automatically send license compliance data to 
 | `license_key_provided` | Whether a license key was set | `true` / `false` |
 | `license_key_valid` | Whether the provided key is valid | `true` / `false` |
 | `unlicensed_run_count` | Number of unlicensed runs on this cluster | `3` |
-| `tool_version` | K10-cleaner version | `1.0.0` |
+| `tool_version` | Backup-monitor version | `1.0.0` |
 | `timestamp` | UTC timestamp | `2026-02-23T15:30:00Z` |
 
 The receiving server also captures the **source IP address** from the HTTP request.
@@ -301,11 +303,11 @@ The receiving server also captures the **source IP address** from the HTTP reque
 
 **When it does NOT fire:**
 - Dev, UAT, or staging environments (license not required)
-- Licensed production/DR clusters (valid `K10CLEANER_LICENSE_KEY`)
-- When `K10CLEANER_NO_PHONE_HOME=true` is set
+- Licensed production/DR clusters (valid `BACKUP_MONITOR_LICENSE_KEY`)
+- When `BACKUP_MONITOR_NO_PHONE_HOME=true` is set
 - After the first failed attempt (network unreachable) — never retries
 
-Both channels use HTTPS (port 443) with a 5-second timeout. If the first attempt fails (e.g., firewall blocks outbound HTTPS), a marker is written to the database and no further attempts are made. This is fully documented here and visible in the source code (`k10_cleaner/compliance.py`).
+Both channels use HTTPS (port 443) with a 5-second timeout. If the first attempt fails (e.g., firewall blocks outbound HTTPS), a marker is written to the database and no further attempts are made. This is fully documented here and visible in the source code (`backup_monitor/compliance.py`).
 
 ### Escalating Delay
 
@@ -320,7 +322,7 @@ Unlicensed production/DR runs incur a startup delay that increases with each run
 
 - Ctrl+C is blocked during the delay
 - The run counter is HMAC-protected — editing the database triggers tamper detection, sets the counter to 50 (penalty), and sends an alert
-- All events are logged to the `audit_log` table in `~/.k10cleaner.db`
+- All events are logged to the `audit_log` table in `~/.backup-monitor.db`
 
 ### Graceful Degradation
 
@@ -341,7 +343,3 @@ This tool is provided **as-is, without warranty of any kind**. Use at your own r
 ### Commercial License
 
 If your organization requires a **proprietary/commercial license** (without AGPL copyleft obligations), enterprise support, custom integrations, or SLA-backed maintenance, see [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) or contact: **georgios.kapellakis@yandex.com**
-
-## Trademark Notice
-
-K10-cleaner is an independent, third-party tool. It is **not affiliated with, endorsed by, or sponsored by Veeam Software or Kasten, Inc.** "Kasten," "K10," "Kasten K10," and "Veeam Kasten" are trademarks of Veeam Software. All other trademarks are the property of their respective owners.

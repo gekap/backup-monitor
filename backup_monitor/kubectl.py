@@ -1,4 +1,4 @@
-# k10-cleaner — thin kubectl subprocess wrapper
+# backup-monitor — thin kubectl subprocess wrapper
 # Copyright (c) 2026 Georgios Kapellakis
 # Licensed under AGPL-3.0 — see LICENSE for details.
 

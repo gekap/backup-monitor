@@ -1,9 +1,9 @@
-# k10-cleaner — CLI tool
+# backup-monitor — CLI tool
 # Copyright (c) 2026 Georgios Kapellakis
 # Licensed under AGPL-3.0 — see LICENSE for details.
 #
-# Replaces k10-cancel-stuck-actions.sh. Provides check mode (policy dashboard),
-# show-completed mode, and cancel mode (stuck action detection + cancellation).
+# Provides check mode (policy dashboard), show-completed mode,
+# and cancel mode (stuck action detection + cancellation).
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import time
 
 from . import VERSION
 from .compliance import ComplianceEngine
-from .db import K10Database
+from .db import BackupMonitorDB
 from .kubectl import Kubectl
 
 # ======================================================================
@@ -231,11 +231,11 @@ def _get_policy_action_verbs(policy: dict) -> list[str]:
 
 
 # ======================================================================
-# K10Cleaner
+# BackupMonitor
 # ======================================================================
 
-class K10Cleaner:
-    def __init__(self, kubectl: Kubectl, db: K10Database, compliance: ComplianceEngine):
+class BackupMonitor:
+    def __init__(self, kubectl: Kubectl, db: BackupMonitorDB, compliance: ComplianceEngine):
         self._kc = kubectl
         self._db = db
         self._compliance = compliance
@@ -713,17 +713,17 @@ class K10Cleaner:
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="k10-cleaner",
+        prog="backup-monitor",
         description="Cancel or delete stuck K10 actions across all namespaces.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  k10-cleaner --check                  Status dashboard\n"
-            "  k10-cleaner --dry-run                 Show what would be done\n"
-            "  k10-cleaner --max-age 2d              Cancel actions older than 2 days\n"
-            "  k10-cleaner --show-recent-completed   Show completed policies\n"
-            "  k10-cleaner --show-fingerprint        Get cluster ID for license request\n"
-            "  k10-cleaner --license-key <key>       Save license key for this cluster\n"
+            "  backup-monitor --check                  Status dashboard\n"
+            "  backup-monitor --dry-run                 Show what would be done\n"
+            "  backup-monitor --max-age 2d              Cancel actions older than 2 days\n"
+            "  backup-monitor --show-recent-completed   Show completed policies\n"
+            "  backup-monitor --show-fingerprint        Get cluster ID for license request\n"
+            "  backup-monitor --license-key <key>       Save license key for this cluster\n"
         ),
     )
     parser.add_argument(
@@ -763,14 +763,14 @@ def main():
     parser.add_argument(
         "--version",
         action="version",
-        version=f"k10-cleaner {VERSION}",
+        version=f"backup-monitor {VERSION}",
     )
 
     args = parser.parse_args()
 
     # Init components
     kc = Kubectl()
-    db = K10Database()
+    db = BackupMonitorDB()
     compliance = ComplianceEngine(kc, db)
 
     # --show-fingerprint: detect fingerprint, print, exit
@@ -815,18 +815,18 @@ def main():
         print("Check that kubectl is configured and you have access to the K10 namespace.", file=sys.stderr)
         sys.exit(1)
 
-    cleaner = K10Cleaner(kc, db, compliance)
+    monitor = BackupMonitor(kc, db, compliance)
 
     if args.check:
-        cleaner.run_check_mode(max_age_seconds)
+        monitor.run_check_mode(max_age_seconds)
         sys.exit(0)
 
     if args.show_recent_completed:
-        cleaner.run_show_completed()
+        monitor.run_show_completed()
         sys.exit(0)
 
     # Cancel mode (default)
-    failed = cleaner.run_cancel_mode(max_age_seconds, args.dry_run)
+    failed = monitor.run_cancel_mode(max_age_seconds, args.dry_run)
     sys.exit(1 if failed > 0 else 0)
 
 
