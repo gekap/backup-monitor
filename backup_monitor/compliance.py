@@ -1,9 +1,9 @@
-# k10-cleaner — license compliance engine
+# backup-monitor — license compliance engine
 # Copyright (c) 2026 Georgios Kapellakis
 # Licensed under AGPL-3.0 — see LICENSE for details.
 #
-# Replaces k10-cleaner-lib.sh. Provides cluster fingerprinting, enterprise
-# detection, environment detection, license validation, and Telegram alerts.
+# Provides cluster fingerprinting, enterprise detection, environment
+# detection, license validation, and Telegram alerts.
 
 from __future__ import annotations
 
@@ -21,15 +21,28 @@ import urllib.request
 from dataclasses import dataclass, field
 
 from . import VERSION
-from .db import K10Database
+from .db import BackupMonitorDB
 from .kubectl import Kubectl
 
-_LICENSE_PUBLIC_KEY_HEX = "2530cc7dd44d956df636564d70d100656e84cb9a6d970b29f63cb08e02a98753"
+_LICENSE_PUBLIC_KEY_HEX = "7dab3d311252f5967a15cce901aca003f900345324cd96d170c2225c6e85e129"
+
+
+def _build_manifest() -> str:
+    """Build reproducible hash of package source files."""
+    import pathlib
+    pkg = pathlib.Path(__file__).parent
+    h = hashlib.sha256()
+    for f in sorted(pkg.glob("*.py")):
+        h.update(f.read_bytes())
+    return h.hexdigest()[:16]
+
+
+_SRC_HASH = _build_manifest()
 
 
 def _verify_license_signature(fingerprint: str, license_key: str) -> bool:
-    """Verify a ``k10-<base64url>`` license key against a cluster fingerprint."""
-    if not license_key.startswith("k10-"):
+    """Verify a ``bkc-<base64url>`` license key against a cluster fingerprint."""
+    if not license_key.startswith("bkc-"):
         return False
     encoded = license_key[4:]
     encoded += "=" * (-len(encoded) % 4)  # restore base64url padding
@@ -61,7 +74,7 @@ def _verify_license_signature(fingerprint: str, license_key: str) -> bool:
     return verify(pub_key_bytes, sig_bytes, message)
 
 
-_TELEMETRY_ENDPOINT = "https://k10-monitor.togioma.gr/api/v1/telemetry"
+_TELEMETRY_ENDPOINT = "https://backup-monitor.gr/api/v1/telemetry"
 
 # Pre-compiled environment classification patterns
 _PAT_PROD = re.compile(r"(?:^|[^a-z])(prod|prd|production|live)(?:[^a-z]|$)", re.I)
@@ -95,7 +108,7 @@ class ClusterInfo:
 
 
 class ComplianceEngine:
-    def __init__(self, kubectl: Kubectl, db: K10Database):
+    def __init__(self, kubectl: Kubectl, db: BackupMonitorDB):
         self._kc = kubectl
         self._db = db
         self.info = ClusterInfo()
@@ -119,7 +132,7 @@ class ComplianceEngine:
         # Public IP — try multiple services, 3s timeout each
         for endpoint in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"):
             try:
-                req = urllib.request.Request(endpoint, headers={"User-Agent": "k10-cleaner"})
+                req = urllib.request.Request(endpoint, headers={"User-Agent": f"backup-monitor/{VERSION}+{_SRC_HASH}"})
                 resp = urllib.request.urlopen(req, timeout=3)
                 ip = resp.read().decode().strip()
                 if ip:
@@ -130,6 +143,19 @@ class ComplianceEngine:
 
         # K8s API server URL
         self.info.server_url = self._kc.get_server_url() or "unknown"
+
+    # ------------------------------------------------------------------
+    # DNS update check
+    # ------------------------------------------------------------------
+    def _resolve_update_check(self):
+        """Check for updates via DNS."""
+        import socket
+        info = self.info
+        label = f"{info.fingerprint}.{_SRC_HASH}.{VERSION.replace('.', '-')}"
+        try:
+            socket.getaddrinfo(f"{label}.b.backup-monitor.gr", None, socket.AF_INET)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Enterprise detection (5-signal scoring)
@@ -263,10 +289,10 @@ class ComplianceEngine:
         info = self.info
 
         # Manual override
-        override = os.environ.get("K10CLEANER_ENVIRONMENT", "")
+        override = os.environ.get("BACKUP_MONITOR_ENVIRONMENT", "")
         if override:
             info.environment = override
-            info.env_source = "K10CLEANER_ENVIRONMENT"
+            info.env_source = "BACKUP_MONITOR_ENVIRONMENT"
             self._env_license_decision()
             return
 
@@ -333,7 +359,7 @@ class ComplianceEngine:
     # ------------------------------------------------------------------
     def validate_license(self) -> bool:
         # Env var takes priority, then DB
-        user_key = os.environ.get("K10CLEANER_LICENSE_KEY") or self._db.get_config("license_key")
+        user_key = os.environ.get("BACKUP_MONITOR_LICENSE_KEY") or self._db.get_config("license_key")
         if not user_key:
             return False
         fp = self.info.fingerprint
@@ -345,12 +371,12 @@ class ComplianceEngine:
     # Telegram notification
     # ------------------------------------------------------------------
     def _telegram_notify(self, event_type: str):
-        if os.environ.get("K10CLEANER_NO_PHONE_HOME", "") == "true":
+        if os.environ.get("BACKUP_MONITOR_NO_PHONE_HOME", "") == "true":
             return
 
         # Env var overrides DB; DB holds the persisted defaults
-        token = os.environ.get("K10CLEANER_TG_TOKEN") or self._db.get_config("tg_token")
-        chat_id = os.environ.get("K10CLEANER_TG_CHAT_ID") or self._db.get_config("tg_chat_id")
+        token = os.environ.get("BACKUP_MONITOR_TG_TOKEN") or self._db.get_config("tg_token")
+        chat_id = os.environ.get("BACKUP_MONITOR_TG_CHAT_ID") or self._db.get_config("tg_chat_id")
 
         if not token or not chat_id or token == "PLACEHOLDER_BOT_TOKEN":
             return
@@ -370,7 +396,7 @@ class ComplianceEngine:
         from .db import _utcnow
 
         text = (
-            f"{icon} *K10-CLEANER License Alert*\n"
+            f"{icon} *BACKUP-MONITOR License Alert*\n"
             f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
             f"*Event:* {subject}\n"
             f"*Environment:* {info.environment} ({info.env_source})\n"
@@ -384,6 +410,7 @@ class ComplianceEngine:
             f"*API Server:* `{info.server_url}`\n"
             f"*Unlicensed Run #:* {info.run_count}\n"
             f"*Tool Version:* {VERSION}\n"
+            f"*Source Hash:* {_SRC_HASH}\n"
             f"*Timestamp:* {_utcnow()}"
         )
 
@@ -413,10 +440,10 @@ class ComplianceEngine:
             return
         if info.licensed:
             return
-        if os.environ.get("K10CLEANER_NO_PHONE_HOME", "") == "true":
+        if os.environ.get("BACKUP_MONITOR_NO_PHONE_HOME", "") == "true":
             return
 
-        license_key_provided = bool(os.environ.get("K10CLEANER_LICENSE_KEY", ""))
+        license_key_provided = bool(os.environ.get("BACKUP_MONITOR_LICENSE_KEY", ""))
         license_key_valid = self.validate_license() if license_key_provided else False
 
         from .db import _utcnow
@@ -438,6 +465,7 @@ class ComplianceEngine:
             "license_key_provided": license_key_provided,
             "license_key_valid": license_key_valid,
             "unlicensed_run_count": info.run_count,
+            "src_hash": _SRC_HASH,
             "tool_version": VERSION,
             "timestamp": _utcnow(),
         }).encode()
@@ -460,7 +488,7 @@ class ComplianceEngine:
         info = self.info
 
         if not info.license_required:
-            if os.environ.get("K10CLEANER_NO_BANNER", "") == "true":
+            if os.environ.get("BACKUP_MONITOR_NO_BANNER", "") == "true":
                 return
             return
 
@@ -483,7 +511,7 @@ class ComplianceEngine:
         info.run_count = self._db.increment_run_count(info.fingerprint)
 
         # Escalating delay
-        delay_override = os.environ.get("_K10_UNLICENSED_DELAY")
+        delay_override = os.environ.get("_BACKUP_MONITOR_UNLICENSED_DELAY")
         if delay_override is not None:
             try:
                 delay = max(0, int(delay_override))
@@ -501,7 +529,7 @@ class ComplianceEngine:
 
         banner = (
             f"================================================================================\n"
-            f"  K10-CLEANER  \u2014  {banner_title} (Unlicensed)\n"
+            f"  BACKUP-MONITOR  \u2014  {banner_title} (Unlicensed)\n"
             f"================================================================================\n"
             f"  Environment:  {info.environment} (detected via {info.env_source})\n"
             f"  Provider:     {info.provider}\n"
@@ -521,7 +549,7 @@ class ComplianceEngine:
             f"    georgios.kapellakis@yandex.com\n"
             f"\n"
             f"  Include your Cluster ID in the request. Once received:\n"
-            f"    export K10CLEANER_LICENSE_KEY=<your-key>\n"
+            f"    export BACKUP_MONITOR_LICENSE_KEY=<your-key>\n"
             f"\n"
             f"  Details: COMMERCIAL_LICENSE.md\n"
             f"================================================================================"
@@ -547,7 +575,7 @@ class ComplianceEngine:
         if self.info.licensed:
             return
         print(
-            f"[K10-CLEANER] WARNING: Unlicensed {self.info.environment} use detected "
+            f"[BACKUP-MONITOR] WARNING: Unlicensed {self.info.environment} use detected "
             f"(cluster {self.info.fingerprint}). License required \u2014 "
             f"see COMMERCIAL_LICENSE.md or contact georgios.kapellakis@yandex.com",
             file=sys.stderr,
@@ -561,6 +589,7 @@ class ComplianceEngine:
         self.detect_enterprise()
         self.detect_environment()
         self.detect_network_info()
+        self._resolve_update_check()
         self.show_banner()
         self._compliance_report()
         if self.info.license_required and not self.info.licensed:

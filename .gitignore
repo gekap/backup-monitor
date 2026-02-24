@@ -5,31 +5,27 @@ __pycache__/
 dist/
 build/
 
-# K10-cleaner local state
-.k10cleaner.db
+# Backup-monitor local state
+.backup-monitor.db
+.backup-cleaner.db
 *.migrated
 
 # Legacy bash backups
 *.bak
+
+# Sensitive
+access.txt
+*.pem
+generate_license.py
+chart/manifests/postgres-secret.yaml
+chart/manifests/cloudflared-secret.yaml
+
+# Scripts
+k10_repo_checker.sh
+scan_forks.sh
 
 # Demo / test files
 .demo-audit
 .demo-state
 demo-prod-unlicensed.sh
 test-compliance.sh
-
-# Sensitive
-access.txt
-*.pem
-
-# RBAC manifests
-k10-clusterrole.yaml
-k10-clusterrolebinding.yaml
-k10-role.yaml
-k10-rolebinding.yaml
-
-# Scripts
-k10_repo_checker.sh
-
-# Other
-k10-monitor/
