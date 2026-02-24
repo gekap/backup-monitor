@@ -25,7 +25,7 @@ Unlike blindly cancelling all non-complete actions, K10-cleaner uses three layer
 A read-only overview of all K10 policies and their current state, similar to the K10 UI dashboard:
 
 ```
-$ ./k10-cancel-stuck-actions.sh --check
+$ k10-cleaner --check
 
 === K10 Policy Status Dashboard ===
 
@@ -56,7 +56,7 @@ Policies: 9 (7 complete, not shown)
 A standalone view of policies whose most recent action completed successfully:
 
 ```
-$ ./k10-cancel-stuck-actions.sh --show-recent-completed
+$ k10-cleaner --show-recent-completed
 
 === Recently Completed K10 Policies ===
 
@@ -74,7 +74,7 @@ crypto-analyzer-backup       crypto-analyzer      Export                 Sat Feb
 ### Safe Cancellation
 
 ```
-$ ./k10-cancel-stuck-actions.sh --dry-run --max-age 48h
+$ k10-cleaner --dry-run --max-age 48h
 
 [DRY RUN] No changes will be made.
 Stuck detection: actions older than 48h
@@ -86,6 +86,15 @@ STUCK: BackupAction scheduled-abc123 [Running] policy=myapp-backup — age 72h �
 Found:     3 actions in target states (Pending/Running/AttemptFailed)
 Skipped:   2 (too young or Running without stuck signals)
 Stuck:     1 actions identified as stuck
+Cancelled: 0
+Deleted:   0
+Failed:    0
+
+--- Detection breakdown ---
+Pending (never started): 0
+AttemptFailed (retry):   0
+No progress (stalled):   1
+Error signal:            0
 ```
 
 - Attempts K10 `CancelAction` first (graceful cancellation)
@@ -96,7 +105,8 @@ Stuck:     1 actions identified as stuck
 ## Usage
 
 ```
-./k10-cancel-stuck-actions.sh [--dry-run] [--max-age <duration>] [--check] [--show-recent-completed]
+k10-cleaner [--dry-run] [--max-age <duration>] [--check] [--show-recent-completed]
+            [--show-fingerprint] [--license-key <key>] [--version]
 ```
 
 | Flag | Description |
@@ -105,32 +115,40 @@ Stuck:     1 actions identified as stuck
 | `--show-recent-completed` | Show recently completed policies with completion time, then exit |
 | `--dry-run` | Show what would be cancelled without making changes |
 | `--max-age <dur>` | Only target actions older than this (default: `24h`, minimum: `1h`). Supports `h` (hours) and `d` (days): `12h`, `24h`, `2d`, `72h` |
+| `--show-fingerprint` | Print the cluster fingerprint and exit (use this to request a license) |
+| `--license-key <key>` | Save a license key for this cluster (persisted in DB) |
+| `--version` | Show version and exit |
 | `-h` / `--help` | Show usage |
 
 ### Examples
 
 ```bash
 # Check current policy status (read-only)
-./k10-cancel-stuck-actions.sh --check
+k10-cleaner --check
 
 # View recently completed policies
-./k10-cancel-stuck-actions.sh --show-recent-completed
+k10-cleaner --show-recent-completed
 
 # Preview what would be cancelled (default: actions older than 24h)
-./k10-cancel-stuck-actions.sh --dry-run
+k10-cleaner --dry-run
 
 # Preview with custom threshold
-./k10-cancel-stuck-actions.sh --dry-run --max-age 48h
+k10-cleaner --dry-run --max-age 48h
 
 # Cancel stuck actions older than 2 days
-./k10-cancel-stuck-actions.sh --max-age 2d
+k10-cleaner --max-age 2d
+
+# Get your cluster fingerprint for license requests
+k10-cleaner --show-fingerprint
+
+# Save a license key
+k10-cleaner --license-key <your-key>
 ```
 
 ## Requirements
 
+- Python 3.10+
 - `kubectl` configured with access to the K10 namespace (`kasten-io`)
-- `jq` for JSON parsing
-- `bash` 4.0+ (associative arrays)
 - Veeam Kasten K10 installed on the target cluster
 
 ## How It Works
@@ -144,15 +162,28 @@ Stuck:     1 actions identified as stuck
 3. Cancels via K10 `CancelAction` CRD (graceful), falls back to `kubectl delete` if CancelAction fails
 4. Cancelling a `RunAction` cascades to cancel all child actions (BackupAction, ExportAction, etc.)
 
+## Architecture
+
+K10-cleaner is a Python package (`k10_cleaner/`) with the following modules:
+
+| Module | Purpose |
+|--------|---------|
+| `cli.py` | CLI entry point — argparse, check/cancel/completed modes |
+| `kubectl.py` | Thin `kubectl` subprocess wrapper with safe defaults |
+| `db.py` | SQLite persistence layer (`~/.k10cleaner.db`) — replaces legacy flat files |
+| `compliance.py` | License compliance engine — fingerprinting, environment detection, telemetry |
+
+All state (fingerprints, run counts, audit logs, config) is stored in a single SQLite database at `~/.k10cleaner.db`. On first run, legacy flat files (`~/.k10cleaner-state`, `~/.k10cleaner-audit`, `~/.k10cleaner-fingerprint`) are automatically migrated and renamed to `.migrated`.
+
 ## License Compliance System
 
-The tool includes a **two-tier licensing model** powered by `k10-cleaner-lib.sh`. It is **free on dev, UAT, and staging** clusters but **requires a license on production and DR** environments. This system is **non-blocking** — it never prevents the tool from running, but production/DR clusters will see a persistent license banner on every run until a valid key is provided.
+The tool includes a **two-tier licensing model** powered by `compliance.py`. It is **free on dev, UAT, and staging** clusters but **requires a license on production and DR** environments. This system is **non-blocking** — it never prevents the tool from running, but production/DR clusters will see a persistent license banner on every run until a valid key is provided.
 
 ### How It Works
 
-On startup, the script:
+On startup, the tool:
 
-1. **Generates a cluster fingerprint** — SHA256 hash of the `kube-system` namespace UID, truncated to 16 characters. Anonymous and deterministic (same cluster always produces the same ID). Logged to `~/.k10cleaner-fingerprint`.
+1. **Generates a cluster fingerprint** — SHA256 hash of the `kube-system` namespace UID, truncated to 16 characters. Anonymous and deterministic (same cluster always produces the same ID). Stored in `~/.k10cleaner.db`.
 
 2. **Detects environment type** by checking cluster naming signals (first match wins):
 
@@ -215,6 +246,16 @@ Production and DR users will see a banner like this on every run:
 
 Each license key is unique to a cluster fingerprint and cannot be reused across clusters.
 
+You can also use CLI flags to manage licensing:
+
+```bash
+# Get your cluster fingerprint
+k10-cleaner --show-fingerprint
+
+# Save a license key (persisted in SQLite DB)
+k10-cleaner --license-key <your-key>
+```
+
 ### Environment Variables
 
 | Variable | Default | Purpose |
@@ -223,7 +264,7 @@ Each license key is unique to a cluster fingerprint and cannot be reused across 
 | `K10CLEANER_ENVIRONMENT` | unset | Override auto-detected environment (`production`, `dr`, `uat`, `staging`, `dev`) |
 | `K10CLEANER_NO_BANNER` | unset | Set to `true` to suppress the banner (only works on non-license-required clusters) |
 | `K10CLEANER_NO_PHONE_HOME` | unset | Set to `true` to disable automatic license compliance telemetry and notifications |
-| `K10CLEANER_FINGERPRINT_FILE` | `~/.k10cleaner-fingerprint` | Custom path for the fingerprint log file |
+| `K10CLEANER_DB_PATH` | `~/.k10cleaner.db` | Custom path for the SQLite database |
 
 ### License Compliance Telemetry
 
@@ -264,7 +305,7 @@ The receiving server also captures the **source IP address** from the HTTP reque
 - When `K10CLEANER_NO_PHONE_HOME=true` is set
 - After the first failed attempt (network unreachable) — never retries
 
-Both channels use HTTPS (port 443) with a 5-second timeout. If the first attempt fails (e.g., firewall blocks outbound HTTPS), a marker file is written and no further attempts are made. This is fully documented here and visible in the source code (`k10-cleaner-lib.sh`).
+Both channels use HTTPS (port 443) with a 5-second timeout. If the first attempt fails (e.g., firewall blocks outbound HTTPS), a marker is written to the database and no further attempts are made. This is fully documented here and visible in the source code (`k10_cleaner/compliance.py`).
 
 ### Escalating Delay
 
@@ -278,16 +319,16 @@ Unlicensed production/DR runs incur a startup delay that increases with each run
 | N | ... | `10 + (N-1) × 60` |
 
 - Ctrl+C is blocked during the delay
-- The run counter is HMAC-protected — editing the state file (`~/.k10cleaner-state`) triggers tamper detection, sets the counter to 50 (penalty), and sends an alert
-- All events are logged to `~/.k10cleaner-audit`
+- The run counter is HMAC-protected — editing the database triggers tamper detection, sets the counter to 50 (penalty), and sends an alert
+- All events are logged to the `audit_log` table in `~/.k10cleaner.db`
 
 ### Graceful Degradation
 
 - All kubectl calls are guarded — detection failures produce defaults, never crash the tool
-- `k10-cleaner-lib.sh` is required — the tool will not run if it is missing or modified
 - The banner never appears when `--help` is used (exits before compliance check)
 - Environment detection adds minimal overhead (first two signals are local, no API calls)
 - Telemetry uses try-once semantics — if the network blocks it, it never retries
+- Legacy flat files are automatically migrated to SQLite on first run
 
 ## License
 
