@@ -1,2 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# K10-cleaner local state
+.k10cleaner.db
+*.migrated
+
+# Legacy bash backups
+*.bak
+
+# Demo / test files
+.demo-audit
+.demo-state
+demo-prod-unlicensed.sh
 test-compliance.sh
+
+# Sensitive
+access.txt
+
+# Other
 k10-monitor/
